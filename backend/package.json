@@ -1,9 +1,9 @@
 {
   "name": "event-planner-backend",
   "version": "1.0.0",
-  "main": "script.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node script.js",
+    "start": "node index.js",
     "seed": "node seed.js"
   },
   "dependencies": {
