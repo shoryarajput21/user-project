@@ -1,0 +1,4 @@
+Users(1)---(N)Rsvps(N)---(1)Events
+Users: id, name, email, password, role
+Events: id, title, description, date, startTime, endTime, location
+Rsvps: id, userId, eventId, status

@@ -1,0 +1,1 @@
+Open index.html in browser (or run a simple static server). Set API_BASE in localStorage if backend is not at http://localhost:5000

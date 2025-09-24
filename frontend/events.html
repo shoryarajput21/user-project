@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Event Planner - Events</title>
+  <link rel="stylesheet" href="./css/styles.css" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f7f7f7; }
+    header { background: #4a90e2; color: #fff; padding: 15px; text-align: center; }
+    nav a { color: #fff; margin: 0 10px; text-decoration: none; }
+    main { max-width: 900px; margin: 20px auto; padding: 20px; background: #fff; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    h2 { border-bottom: 2px solid #eee; padding-bottom: 5px; margin-top: 20px; }
+    .event { border: 1px solid #ddd; padding: 15px; margin: 15px 0; border-radius: 8px; background: #fafafa; }
+    .event h3 { margin: 0 0 10px; color: #333; }
+    .meta { font-size: 0.9em; color: #555; margin-bottom: 8px; }
+    .desc { margin-bottom: 10px; }
+    button { margin: 3px; padding: 6px 12px; border: none; border-radius: 5px; cursor: pointer; }
+    button:hover { opacity: 0.9; }
+    .going { background: #4caf50; color: #fff; }
+    .maybe { background: #ffc107; color: #000; }
+    .decline { background: #f44336; color: #fff; }
+    .delete { background: #e53935; color: #fff; }
+    .summary { background: #1976d2; color: #fff; }
+    .update { background: #ff9800; color: #fff; }
+    #createEventForm input, #createEventForm textarea { display:block; margin:8px 0; width:100%; padding:8px; }
+    #createEventForm button { background:#4a90e2; color:#fff; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Event Planner</h1>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="login.html" id="authLink">Login</a>
+  </nav>
+</header>
+
+<main>
+  <section id="userInfo"></section>
+
+  <!-- Only visible to Admins -->
+  <section id="adminArea" style="display:none">
+    <h2>Create Event (Admin)</h2>
+    <form id="createEventForm">
+      <input name="title" placeholder="Title" required />
+      <input name="date" type="date" required />
+      <input name="startTime" type="time" />
+      <input name="endTime" type="time" />
+      <input name="location" placeholder="Location" />
+      <textarea name="description" placeholder="Description"></textarea>
+      <button type="submit">Create</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Upcoming Events</h2>
+    <div id="eventsList"></div>
+  </section>
+
+  <section>
+    <h2>My RSVPs</h2>
+    <div id="myRsvps"></div>
+  </section>
+</main>
+
+<template id="eventTpl">
+  <div class="event">
+    <h3 class="title"></h3>
+    <p class="meta"></p>
+    <p class="desc"></p>
+    <div class="actions"></div>
+    <div class="adminActions"></div>
+  </div>
+</template>
+
+<script>
+const apiBase = localStorage.getItem('API_BASE') || 'http://localhost:5000';
+const token = localStorage.getItem('token');
+const user = JSON.parse(localStorage.getItem('user') || 'null');
+const authLink = document.getElementById('authLink');
+
+if (user) {
+  document.getElementById('userInfo').innerHTML = 
+    '<strong>Logged in:</strong> ' + user.name + ' (' + user.role + ') ' +
+    '<button id="logoutBtn">Logout</button>';
+  authLink.innerText = 'Events';
+}
+document.getElementById('logoutBtn')?.addEventListener('click', () => {
+  localStorage.removeItem('token'); localStorage.removeItem('user'); location.reload();
+});
+
+if (user && user.role === 'admin') {
+  document.getElementById('adminArea').style.display = 'block';
+}
+
+async function fetchEvents() {
+  const res = await fetch(apiBase + '/api/events');
+  const events = await res.json();
+  const list = document.getElementById('eventsList');
+  list.innerHTML = '';
+
+  events.forEach(ev => {
+    const tpl = document.getElementById('eventTpl').content.cloneNode(true);
+    tpl.querySelector('.title').innerText = ev.title;
+    tpl.querySelector('.meta').innerText = ev.date + ' | ' + (ev.startTime || '') + ' - ' + (ev.endTime || '') + ' | ' + (ev.location || '');
+    tpl.querySelector('.desc').innerText = ev.description || '';
+
+    const actions = tpl.querySelector('.actions');
+    const adminActions = tpl.querySelector('.adminActions');
+
+    if (user && user.role === 'user') {
+      const goingBtn = document.createElement('button'); goingBtn.innerText = 'Going'; goingBtn.className = 'going';
+      const maybeBtn = document.createElement('button'); maybeBtn.innerText = 'Maybe'; maybeBtn.className = 'maybe';
+      const declineBtn = document.createElement('button'); declineBtn.innerText = 'Decline'; declineBtn.className = 'decline';
+      [goingBtn, maybeBtn, declineBtn].forEach(btn => {
+        btn.addEventListener('click', () => submitRsvp(ev._id, btn.innerText.toLowerCase()));
+        actions.appendChild(btn);
+      });
+    }
+
+    if (user && user.role === 'admin') {
+      const deleteBtn = document.createElement('button'); deleteBtn.innerText = 'Delete'; deleteBtn.className = 'delete';
+      deleteBtn.addEventListener('click', () => deleteEvent(ev._id));
+      const summaryBtn = document.createElement('button'); summaryBtn.innerText = 'Summary'; summaryBtn.className = 'summary';
+      summaryBtn.addEventListener('click', () => showSummary(ev._id));
+      const updateBtn = document.createElement('button'); updateBtn.innerText = 'Update'; updateBtn.className = 'update';
+      updateBtn.addEventListener('click', () => updateEvent(ev));
+      adminActions.appendChild(deleteBtn);
+      adminActions.appendChild(summaryBtn);
+      adminActions.appendChild(updateBtn);
+    }
+
+    list.appendChild(tpl);
+  });
+}
+
+async function submitRsvp(eventId, status) {
+  if (!token) return alert('Please login to RSVP');
+  const res = await fetch(apiBase + '/api/rsvps', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + token },
+    body: JSON.stringify({ eventId, status })
+  });
+  const data = await res.json();
+  if (res.ok) { alert('RSVP saved: ' + status); loadMyRsvps(); }
+  else { alert(data.message || 'Error'); }
+}
+
+async function loadMyRsvps() {
+  if (!token) return;
+  const res = await fetch(apiBase + '/api/rsvps/me', { headers: { Authorization: 'Bearer ' + token }});
+  const data = await res.json();
+  const container = document.getElementById('myRsvps');
+  container.innerHTML = '';
+
+  if (!Array.isArray(data)) return console.error('RSVP data is not an array', data);
+
+  data.forEach(r => {
+    const div = document.createElement('div');
+    if (r.event) {
+      div.innerText = r.event.title + ' (' + new Date(r.event.date).toLocaleDateString() + ') — ' + r.status;
+    } else {
+      div.innerText = 'Event removed — ' + r.status;
+    }
+    container.appendChild(div);
+  });
+}
+
+
+async function deleteEvent(id) {
+  if (!token) return alert('Admin only');
+  if (!confirm('Delete event?')) return;
+  const res = await fetch(apiBase + '/api/events/' + id, { method: 'DELETE', headers: { Authorization: 'Bearer ' + token }});
+  if (res.ok) { alert('Deleted'); fetchEvents(); }
+  else { const d = await res.json(); alert(d.message || 'Error'); }
+}
+
+async function showSummary(id) {
+  if (!token) return alert('Admin only');
+  const res = await fetch(apiBase + '/api/events/' + id + '/summary', { headers: { Authorization: 'Bearer ' + token }});
+  const data = await res.json();
+  alert('Summary:\nGoing: ' + data.going + '\nMaybe: ' + data.maybe + '\nDecline: ' + data.decline);
+}
+
+function updateEvent(ev) {
+  const newTitle = prompt("Update Event Title:", ev.title);
+  if (!newTitle) return;
+  fetch(apiBase + '/api/events/' + ev._id, {
+    method: 'PUT',
+    headers: { 'Content-Type':'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ ...ev, title: newTitle })
+  }).then(r => r.json()).then(d => {
+    alert("Event updated!");
+    fetchEvents();
+  });
+}
+
+document.getElementById('createEventForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!token) return alert('Admin only');
+  const f = e.target;
+  const payload = {
+    title: f.title.value, date: f.date.value, startTime: f.startTime.value, endTime: f.endTime.value, location: f.location.value, description: f.description.value
+  };
+  const res = await fetch(apiBase + '/api/events', { method: 'POST', headers: { 'Content-Type':'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(payload) });
+  const d = await res.json();
+  if (res.ok) { alert('Created'); f.reset(); fetchEvents(); } else alert(d.message || 'Error');
+});
+
+// initial
+fetchEvents();
+loadMyRsvps();
+</script>
+</body>
+</html>
